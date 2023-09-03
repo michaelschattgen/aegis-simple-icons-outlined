@@ -1,0 +1,123 @@
+name: Release icon pack
+
+on:
+  workflow_dispatch:
+    inputs:
+      forceRelease:
+        description: 'Force a new release regardless of wheter a new version of simple-icons is available'
+        default: false
+        required: false
+        type: boolean
+  schedule:
+    - cron: '0 21 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Checkout submodules
+        run: git submodule update --init --recursive
+      - name: Check version
+        run: |
+          set -ex
+          export DIR="simple-icons"
+          latest="$(git -C ${DIR} tag | sed 's/^v//' | sort -V -r | head -n 1)"
+          current="$(git -C ${DIR} describe --tags --abbrev=0)"
+
+          # source for these two functions: https://stackoverflow.com/a/4024263
+          verlte() {
+              [  "$1" = "`echo -e "$1\n$2" | sort -V | head -n1`" ]
+          }
+          verlt() {
+              [ "$1" = "$2" ] && return 1 || verlte $1 $2
+          }
+
+          if verlt $current $latest; then
+            echo "${latest}" > icons_version
+          fi
+          if "${{ inputs.forceRelease }}" == "true"; then
+            echo "${latest}" > icons_version
+          fi
+      - uses: actions/github-script@v6
+        name: Determine whether to continue
+        id: check
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo
+            if (!fs.existsSync("icons_version")) {
+              return 'stop'
+            } else {
+              return 'continue'
+            }
+          result-encoding: string
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt;
+      - name: Update simple-icons and increment version
+        id: version
+        if: steps.check.outputs.result == 'continue'
+        run: |
+          set -ex
+          git -C simple-icons checkout "$(cat icons_version)"
+          version=$(($(cat version) + 1))
+          echo $version > version
+          echo "number=${version}" >> $GITHUB_OUTPUT
+      - name: Generate icon pack
+        id: iconpack
+        if: steps.check.outputs.result == 'continue'
+        run: |
+          set -ex
+          version="${{ steps.version.outputs.number }}"
+          filename="aegis-simple-icons-outlined-v${version}.zip"
+          python pack.py gen-icon-pack --output "${filename}" --simple-icons simple-icons --version "${version}"
+          echo "filename=${filename}" >> $GITHUB_OUTPUT
+      - name: Commit, tag and push
+        if: steps.check.outputs.result == 'continue'
+        run: |
+          set -ex
+          version="${{ steps.version.outputs.number }}"
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY
+          git commit -am "Release v${version}"
+          git tag "v${version}" -a -m "This release includes icons of simple-icons $(cat icons_version)."
+          git push --follow-tags
+      - name: Create release
+        id: release
+        if: steps.check.outputs.result == 'continue'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const release = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: "v${{ steps.version.outputs.number }}",
+              name: "v${{ steps.version.outputs.number }}",
+              draft: false,
+              prerelease: false
+            });
+            console.log(`Created release: ${release.data.html_url}`);
+            return release.data.id;
+          result-encoding: string
+      - name: Upload icon pack
+        if: steps.check.outputs.result == 'continue'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: "${{ steps.release.outputs.result }}",
+              name: "${{ steps.iconpack.outputs.filename }}",
+              data: await fs.readFileSync("./${{ steps.iconpack.outputs.filename }}")
+            });
