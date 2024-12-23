@@ -64,7 +64,7 @@ class IconGenerator:
         self._icon_dir = os.path.join(path)
 
         with io.open(os.path.join(self._icon_dir, "_data", "simple-icons.json"), "r", encoding='utf-8') as f:
-            self._icons = json.load(f)["icons"]
+            self._icons = json.load(f)
 
     def generate(self, icon, square=False):
         title = icon["title"]
