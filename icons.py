@@ -63,7 +63,7 @@ class IconGenerator:
     def __init__(self, path):
         self._icon_dir = os.path.join(path)
 
-        with io.open(os.path.join(self._icon_dir, "_data", "simple-icons.json"), "r", encoding='utf-8') as f:
+        with io.open(os.path.join(self._icon_dir, "data", "simple-icons.json"), "r", encoding='utf-8') as f:
             self._icons = json.load(f)
 
     def generate(self, icon, square=False):
